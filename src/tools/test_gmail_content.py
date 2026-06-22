@@ -1,0 +1,11 @@
+import sqlite3
+conn = sqlite3.connect('./data/sqlite/logmon.db')
+cur = conn.cursor()
+cur.execute('SELECT id, subject, filename, content FROM log_emails LIMIT 1')
+row = cur.fetchone()
+print(f'ID: {row[0]}')
+print(f'Subject: {row[1]}')
+print(f'Filename: {row[2]}')
+print(f'--- CSV 내용 (앞 500자) ---')
+print(row[3][:500])
+conn.close()
