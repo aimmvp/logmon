@@ -1,8 +1,8 @@
 import os
 import base64
-import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -36,10 +36,31 @@ def get_gmail_service():
     return build('gmail', 'v1', credentials=creds)
 
 
-def fetch_log_emails(max_results: int = 10) -> list[dict]:
-    """Datadog 로그 메일 목록 조회"""
+def get_last_collected_date(db_path: str) -> datetime | None:
+    """DB에서 마지막으로 저장된 메일 날짜 조회"""
+    if not os.path.exists(db_path):
+        return None
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT MAX(date) FROM log_emails")
+        row = cur.fetchone()
+        if row and row[0]:
+            return parsedate_to_datetime(row[0])
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+    return None
+
+
+def fetch_log_emails(max_results: int = 50, since: datetime | None = None) -> list[dict]:
+    """Datadog 로그 메일 목록 조회. since 지정 시 해당 날짜 이후 메일만 조회."""
     service = get_gmail_service()
     query = f'from:{SENDER} subject:{SUBJECT_PREFIX}'
+    if since:
+        # Gmail after: 필터는 YYYY/MM/DD 형식 사용
+        query += f' after:{since.strftime("%Y/%m/%d")}'
 
     result = service.users().messages().list(
         userId='me',
@@ -89,8 +110,8 @@ def fetch_log_emails(max_results: int = 10) -> list[dict]:
     return emails
 
 
-def save_to_sqlite(emails: list[dict]):
-    """수집한 로그 메일을 SQLite에 저장"""
+def save_to_sqlite(emails: list[dict]) -> tuple[int, int]:
+    """수집한 로그 메일을 SQLite에 저장. (저장건수, 중복스킵건수) 반환."""
     db_path = os.getenv('SQLITE_DB_PATH')
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -108,6 +129,7 @@ def save_to_sqlite(emails: list[dict]):
         )
     ''')
 
+    saved = skipped = 0
     for email in emails:
         for att in email['attachments']:
             try:
@@ -123,20 +145,23 @@ def save_to_sqlite(emails: list[dict]):
                     att['content'],
                     datetime.now().isoformat()
                 ))
+                if cur.rowcount:
+                    saved += 1
+                else:
+                    skipped += 1
             except Exception as e:
                 print(f'⚠️ 저장 실패: {e}')
 
     conn.commit()
     conn.close()
-    print(f'✅ SQLite 저장 완료: {db_path}')
+    return saved, skipped
 
 
 if __name__ == '__main__':
     print('📧 Datadog 로그 메일 수집 시작...')
     emails = fetch_log_emails(max_results=10)
     print(f'  수집된 메일: {len(emails)}건')
-
     for e in emails:
         print(f'  - {e["subject"]} ({len(e["attachments"])}개 첨부)')
-
-    save_to_sqlite(emails)
+    saved, skipped = save_to_sqlite(emails)
+    print(f'✅ 저장: {saved}건 / 중복 스킵: {skipped}건')
