@@ -15,6 +15,7 @@ dependencies = [
 
     # LLM / Embedding
     "openai>=1.40",
+    "pdfplumber",
 
     # Monitoring
     "langfuse>=2.0",

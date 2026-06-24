@@ -21,3 +21,6 @@ build/
 # IDE
 .vscode/
 .idea/
+
+# documents
+etc_documents/

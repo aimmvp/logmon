@@ -1,0 +1,25 @@
+# 시스템 기본 현황
+
+- 서비스는 “Swing 로그인 서비스”이다.
+- 4대의 siteminder 서버로 구성됨
+- 서비스는 sso 솔루션인 broadcom siteminder와 siteminder 의 api 를 customizing 한 Library, 2차 인증을 주로 담당하는 java 영역으로 구성됨
+- 로그는 3가지를 제공한다.
+    - smps_stats
+        - SSO 솔루션인 broadcom siteminder 의 stat log 임
+        - 각 항목의 의미는 siteminder 공식문서를 참고
+        - sample log : [Tue Jun 23 2026 22:31:02] Msgs=1000250 Throughput=1.968628 Response_Time=4.403502 Wait_Time_In_Queue=0.005269 Max_HP_Msg=6 Max_NP_Msg=6 Current_Depth=0 Max_Depth=7 Current_High_Depth=0 Current_Norm_Depth=0 Current_Threads=8 Max_Threads=8 Busy_Threads=0 Current_Connections=38 Max_Connections=435 Exceeded_Limit=0 Core_Result=N]
+    - swing_library
+        - siteminder 의 api 를 customizing 한 library 로그
+        - sample log : 20260623223754,AuthType=PWD,AuthResult=0,AuthReason=32000,ID=D23807129,STATUS=0,CO_CL_CD=T
+    - catalina
+        - tomcat 에 올라가 있는 java 영역의 로그
+        - 2차인증 Otp 를 generate/send 하는 sendotppwd 와 otp 의 mq를 이용한 실제 발송을 위한 sendsmsbymqput 으로 구성됨
+- 1차 인증
+    - 시도 : AuthType=PWD
+    - 성공 : AuthType=PWD, AuthResult=0
+    - 실패 : AuthType=PWD, AUthResult=-1
+- 2차 인증
+    - SKIP : 2차 인증 제외 대상으로 AuthType=SKIP
+    - 발송시도 : catalina log 에서 message 에 “sendOtpPwdNew” 나 “ sendOtpPwd”  포함
+    - 인증성공 : AuthType=OTP AUthResult=0
+    - 인증실패 : Verification result = [false]

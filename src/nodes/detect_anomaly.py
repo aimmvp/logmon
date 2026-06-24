@@ -3,6 +3,7 @@ import json
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 from src.schemas.state import LogMonState
+from src.utils.prompt_loader import load_system_context
 
 load_dotenv()
 
@@ -17,9 +18,15 @@ DEPLOYMENT = os.getenv('AZURE_OPENAI_DEPLOYMENT')
 def detect_anomaly(state: LogMonState) -> LogMonState:
     """LLM 기반 이상 감지"""
 
+    system_context = load_system_context()
+
     prompt = f"""
+{system_context}
+
+---
+
 당신은 SSO 서비스 운영 전문가입니다.
-아래 3가지 로그 데이터를 분석하여 이상 징후를 감지하세요.
+위 시스템 명세를 참고하여 아래 3가지 로그 데이터를 분석하고 이상 징후를 감지하세요.
 
 ## swg_lib 로그 (인증 로그)
 {json.dumps(state['swg_lib_logs'][:50], ensure_ascii=False, indent=2)}
@@ -31,8 +38,8 @@ def detect_anomaly(state: LogMonState) -> LogMonState:
 {json.dumps(state['smps_stats_logs'][:50], ensure_ascii=False, indent=2)}
 
 ## 분석 기준
-- swg_lib: 인증 실패(auth_result=1) 급증, 특정 auth_reason 패턴
-- catalina: ERROR/WARN 레벨 로그, 예외 발생
+- swg_lib: 인증 실패(auth_result=-1) 급증, 특정 auth_reason 패턴
+- catalina: ERROR/WARN 레벨 로그, 예외 발생, sendOtpPwd/sendSmsByMqPut 오류
 - smps_stats: response_time 급증, exceeded_limit > 0, core_result = Y
 
 ## 응답 형식 (JSON만 반환)
