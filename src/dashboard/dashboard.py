@@ -15,6 +15,13 @@ import streamlit as st
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]  # src/dashboard/ → 프로젝트 루트
+KST_OFFSET = timedelta(hours=9)
+
+
+def to_kst(series: "pd.Series") -> "pd.Series":
+    """UTC timestamp 시리즈를 KST로 변환 (tz 제거하여 naive datetime 반환)"""
+    dt = pd.to_datetime(series, format="ISO8601", utc=True)
+    return (dt + KST_OFFSET).dt.tz_localize(None)
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
@@ -219,22 +226,29 @@ elif menu == "📊 로그 조회":
 
     hosts = query("SELECT DISTINCT host FROM log_swg_lib ORDER BY host")
     host_options = ["전체"] + (hosts["host"].tolist() if not hosts.empty else [])
-    selected_host = st.selectbox("호스트", host_options)
+
+    col_host, col_toggle = st.columns([3, 1])
+    with col_host:
+        selected_host = st.selectbox("호스트", host_options)
+    with col_toggle:
+        sample_only = st.toggle("샘플 데이터만", value=False)
+
     host_filter = "" if selected_host == "전체" else f"AND host = '{selected_host}'"
+    sample_filter = "AND email_id IN (9001, 9002, 9999)" if sample_only else ""
 
     if log_type == "smps_stats":
         df = query(f"""
             SELECT timestamp, host, response_time, busy_threads,
                    throughput, exceeded_limit, core_result, current_connections
             FROM log_smps_stats
-            WHERE timestamp >= '{date_from}' AND timestamp <= '{date_to} 23:59:59'
-            {host_filter}
+            WHERE timestamp >= '{date_from}T00:00:00.000Z' AND timestamp <= '{date_to}T23:59:59.999Z'
+            {host_filter} {sample_filter}
             ORDER BY timestamp DESC
             LIMIT 500
         """)
         if not df.empty:
             df_chart = df[["timestamp", "host", "response_time", "busy_threads"]].copy()
-            df_chart["timestamp"] = pd.to_datetime(df_chart["timestamp"])
+            df_chart["timestamp"] = to_kst(df_chart["timestamp"])
             df_chart = df_chart.sort_values("timestamp")
 
             # 10분 평균 집계
@@ -262,15 +276,15 @@ elif menu == "📊 로그 조회":
             SELECT timestamp, host, auth_type, auth_result, auth_reason,
                    user_id, co_cl_cd
             FROM log_swg_lib
-            WHERE timestamp >= '{date_from}' AND timestamp <= '{date_to} 23:59:59'
-            {host_filter}
+            WHERE timestamp >= '{date_from}T00:00:00.000Z' AND timestamp <= '{date_to}T23:59:59.999Z'
+            {host_filter} {sample_filter}
             ORDER BY timestamp DESC
             LIMIT 500
         """)
         if not df.empty:
             # 시간대별 인증 성공/실패 추이
             st.markdown('<div class="section-title">시간대별 인증 결과</div>', unsafe_allow_html=True)
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df["timestamp"] = to_kst(df["timestamp"])
             df["hour"] = df["timestamp"].dt.floor("h")
             df_grouped = df.groupby(["hour", "auth_result"]).size().unstack(fill_value=0)
             df_grouped.columns = [f"result_{c}" for c in df_grouped.columns]
@@ -283,8 +297,8 @@ elif menu == "📊 로그 조회":
         df = query(f"""
             SELECT timestamp, host, log_level, logger, log_message
             FROM log_catalina
-            WHERE timestamp >= '{date_from}' AND timestamp <= '{date_to} 23:59:59'
-            {host_filter}
+            WHERE timestamp >= '{date_from}T00:00:00.000Z' AND timestamp <= '{date_to}T23:59:59.999Z'
+            {host_filter} {sample_filter}
             ORDER BY timestamp DESC
             LIMIT 500
         """)
