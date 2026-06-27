@@ -7,7 +7,7 @@ from src.nodes.detect_anomaly import detect_anomaly
 from src.nodes.generate_alert import generate_alert
 from src.nodes.generate_guide import generate_guide
 from src.nodes.generate_report import generate_report
-from src.nodes.send_slack import send_slack
+from src.nodes.notify import notify
 
 
 def should_load(state: LogMonState) -> str:
@@ -46,7 +46,7 @@ def build_graph():
     graph.add_node('generate_alert', generate_alert)
     graph.add_node('generate_guide', generate_guide)
     graph.add_node('generate_report', generate_report)
-    graph.add_node('send_slack', send_slack)
+    graph.add_node('send_slack', notify)
 
     # ── 엣지 연결 ──────────────────────────────────────────────────────────────
     graph.set_entry_point('classify_input')
