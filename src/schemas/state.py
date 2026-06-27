@@ -4,6 +4,10 @@ from typing import TypedDict, Optional
 class LogMonState(TypedDict):
     # ── 공통 ──────────────────────────────────────────────────────────────────
     run_at: str                        # 실행 시각
+    input_type: Optional[str]          # A/B/C/D 분류 결과
+    batch_trigger: Optional[bool]      # True = 배치 트리거 (SC-001)
+    operator_input: Optional[str]      # 운영자 자연어 입력 (SC-002/003)
+    report_requested: Optional[bool]   # True = 보고서 생성 요청 (SC-003)
 
     # ── load_logs ─────────────────────────────────────────────────────────────
     swg_lib_logs: list[dict]
@@ -25,3 +29,4 @@ class LogMonState(TypedDict):
     action_history: list[dict]         # 매 턴 가이드 + 운영자 피드백 누적
     rag_results: list[dict]            # RAG 검색 결과 (원본)
     guide_message: str                 # 생성된 장애 대응 가이드 (Slack 전송용)
+    normalized_at: Optional[str]       # 정상화 확인 시각 (SC-003 트리거 시점)
