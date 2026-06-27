@@ -6,6 +6,7 @@ from src.nodes.load_logs import load_logs
 from src.nodes.detect_anomaly import detect_anomaly
 from src.nodes.generate_alert import generate_alert
 from src.nodes.generate_guide import generate_guide
+from src.nodes.evaluate_status import evaluate_status
 from src.nodes.generate_report import generate_report
 from src.nodes.notify import notify
 
@@ -29,6 +30,20 @@ def should_guide(state: LogMonState) -> str:
     return 'end'
 
 
+def should_evaluate(state: LogMonState) -> str:
+    """C 유형(조치 결과 입력) → evaluate_status로 분기"""
+    if state.get('input_type') == 'C':
+        return 'evaluate'
+    return 'guide'
+
+
+def should_next_after_evaluate(state: LogMonState) -> str:
+    """정상화 완료 시 report, 미정상화 시 guide 재진입"""
+    if state.get('status') == '정상화완료':
+        return 'report'
+    return 'guide'
+
+
 def should_report(state: LogMonState) -> str:
     """정상화 완료 시 SC-003 보고서 생성으로 분기"""
     if state.get('status') == '정상화완료':
@@ -45,6 +60,7 @@ def build_graph():
     graph.add_node('detect_anomaly', detect_anomaly)
     graph.add_node('generate_alert', generate_alert)
     graph.add_node('generate_guide', generate_guide)
+    graph.add_node('evaluate_status', evaluate_status)
     graph.add_node('generate_report', generate_report)
     graph.add_node('send_slack', notify)
 
@@ -53,7 +69,7 @@ def build_graph():
     graph.add_conditional_edges(
         'classify_input',
         should_load,
-        {'load': 'load_logs', 'skip_load': 'generate_guide'}
+        {'load': 'load_logs', 'skip_load': 'evaluate_status'}
     )
     graph.add_edge('load_logs', 'detect_anomaly')
     graph.add_conditional_edges(
@@ -66,6 +82,11 @@ def build_graph():
         'generate_alert',
         should_guide,
         {'guide': 'generate_guide', 'end': 'send_slack'}
+    )
+    graph.add_conditional_edges(
+        'evaluate_status',
+        should_next_after_evaluate,
+        {'report': 'generate_report', 'guide': 'generate_guide'}
     )
     graph.add_conditional_edges(
         'generate_guide',
