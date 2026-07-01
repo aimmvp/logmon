@@ -59,10 +59,9 @@
 - 파일명 : catalina.out
 - 2차인증 Otp 를 generate/send 하는 sendotppwd 와 otp 의 mq를 이용한 실제 발송을 위한 sendsmsbymqput 으로 구성됨
 - 2차 인증
-    - SKIP : 2차 인증 제외 대상으로 AuthType=SKIP
-    - 발송시도 : catalina log 에서 message 에 “sendOtpPwdNew” 나 “ sendOtpPwd”  포함
-    - 2차 인증성공 : AuthType=OTP AuthResult=0
-    - 2차 인증실패 : Verification result = [false]
+    - OTP 발송시도 : catalina log 에서 message 에 "Request OTP Generate" 가 포함된 로그
+    - OTP 인증성공 : catalina log 에서 message 에 "Verification result = [true]" 가 포함된 로그
+    - OTP 인증실패 : catalina log 에서 message 에 "Verification result = [false]" 가 포함된 로그
 
 ## 5. 알람 대상(manual)
 

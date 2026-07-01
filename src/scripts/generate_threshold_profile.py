@@ -93,7 +93,7 @@ def fetch_auth_stats(start: str, end: str) -> pd.DataFrame:
     return df
 
 
-def build_profile(smps_df: pd.DataFrame, auth_df: pd.DataFrame) -> dict:
+def build_profile(smps_df: pd.DataFrame, auth_df: pd.DataFrame, otp_df: pd.DataFrame = None) -> dict:
     """host × weekday × bucket 단위 임계치 계산"""
     hosts_result = {}
 
@@ -122,10 +122,28 @@ def build_profile(smps_df: pd.DataFrame, auth_df: pd.DataFrame) -> dict:
                     af_thresholds = {"baseline_avg": 0, "normal_max": 0,
                                      "monitor_threshold": 0, "critical_threshold": 0}
 
+                # OTP 성공률 임계치
+                if otp_df is not None:
+                    otp_b = otp_df[(otp_df["host"] == host) & (otp_df["weekday"] == weekday) & (otp_df["bucket"] == bucket)]
+                    if len(otp_b) > 0 and otp_b["otp_try"].sum() > 0:
+                        success_rate = round(100.0 * otp_b["otp_success"].sum() / otp_b["otp_try"].sum(), 2)
+                        fail_rate = round(100.0 - success_rate, 2)
+                        otp_thresholds = {
+                            "baseline_avg": success_rate,
+                            "normal_max": success_rate,
+                            "monitor_threshold": round(fail_rate * 1.5, 3),
+                            "critical_threshold": round(fail_rate * 2.0, 3),
+                        }
+                    else:
+                        otp_thresholds = {"baseline_avg": None, "normal_max": None, "monitor_threshold": None, "critical_threshold": None}
+                else:
+                    otp_thresholds = {"baseline_avg": None, "normal_max": None, "monitor_threshold": None, "critical_threshold": None}
+
                 hosts_result[host][weekday][bucket] = {
                     "response_time": _calc_thresholds(smps_b["response_time"]),
                     "busy_threads": _calc_thresholds(smps_b["busy_threads"]),
                     "auth_fail_rate": af_thresholds,
+                    "otp_success_rate": otp_thresholds,
                 }
 
     return hosts_result
@@ -157,6 +175,30 @@ def generate_summary(start: str, end: str, hosts_result: dict) -> str:
     return json.loads(resp.choices[0].message.content).get("analysis_summary", "")
 
 
+def fetch_otp_stats(start: str, end: str) -> pd.DataFrame:
+    """catalina 로그에서 OTP 성공/실패 집계"""
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query("""
+        SELECT
+            host,
+            strftime('%w', datetime(timestamp, '+9 hours')) AS weekday,
+            strftime('%H', datetime(timestamp, '+9 hours')) || ':' ||
+            printf('%02d', CAST(strftime('%M', datetime(timestamp, '+9 hours')) AS INTEGER) / 10 * 10) AS bucket,
+            log_message
+        FROM log_catalina
+        WHERE timestamp >= ? AND timestamp <= ?
+        AND (log_message LIKE '%Request OTP Generate%'
+             OR log_message LIKE '%Verification result = [true]%'
+             OR log_message LIKE '%Verification result = [false]%')
+    """, conn, params=(f"{start}T00:00:00.000Z", f"{end}T23:59:59.999Z"))
+    conn.close()
+    df["weekday"] = df["weekday"].map(WEEKDAY_MAP)
+    df["otp_try"] = df["log_message"].str.contains("Request OTP Generate").astype(int)
+    df["otp_success"] = df["log_message"].str.contains(r"Verification result = \[true\]", regex=True).astype(int)
+    df["otp_fail"] = df["log_message"].str.contains(r"Verification result = \[false\]", regex=True).astype(int)
+    return df
+
+
 def main(start: str, end: str):
     print(f"임계치 프로파일 생성 시작: {start} ~ {end}")
 
@@ -168,8 +210,12 @@ def main(start: str, end: str):
     auth_df = fetch_auth_stats(start, end)
     print(f"  → {len(auth_df):,}건")
 
+    print("  catalina OTP 로드 중...")
+    otp_df = fetch_otp_stats(start, end)
+    print(f"  → {len(otp_df):,}건")
+
     print("  임계치 계산 중 (IQR + p50/p95)...")
-    hosts_result = build_profile(smps_df, auth_df)
+    hosts_result = build_profile(smps_df, auth_df, otp_df)
 
     print("  LLM 분석 요약 생성 중 (1회)...")
     summary = generate_summary(start, end, hosts_result)
