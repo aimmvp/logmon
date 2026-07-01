@@ -113,6 +113,7 @@ def _default_state() -> dict:
         'anomaly_summary': '',
         'anomaly_details': [],
         'alert_message': '',
+        'anomaly_level': '정상', # 추가
         # SC-002 필드
         'incident_id': None,
         'iteration_count': 0,

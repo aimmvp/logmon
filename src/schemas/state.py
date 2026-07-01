@@ -16,6 +16,7 @@ class LogMonState(TypedDict):
 
     # ── detect_anomaly (SC-001) ───────────────────────────────────────────────
     anomaly_detected: bool
+    anomaly_level: str                 # 정상 / 모니터링 / 즉시조치
     anomaly_summary: str               # LLM이 작성한 이상 감지 요약
     anomaly_details: list[dict]        # 이상 항목 상세
 

@@ -1,5 +1,6 @@
 import os
 import json
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 from src.schemas.state import LogMonState
@@ -13,20 +14,82 @@ client = AzureOpenAI(
     api_version=os.getenv('AZURE_OPENAI_API_VERSION'),
 )
 DEPLOYMENT = os.getenv('AZURE_OPENAI_DEPLOYMENT')
+THRESHOLD_PATH = "./data/threshold_profile.json"
+
+
+def _load_threshold_profile() -> dict:
+    if not os.path.exists(THRESHOLD_PATH):
+        return {}
+    with open(THRESHOLD_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _get_current_bucket() -> str:
+    """현재 시각 기준 10분 버킷 (KST) — 폴백용"""
+    kst_now = datetime.now(timezone.utc) + timedelta(hours=9)
+    minute_bucket = (kst_now.minute // 10) * 10
+    return f"{kst_now.hour:02d}:{minute_bucket:02d}"
+
+
+WEEKDAY_MAP = {0: "mon", 1: "tue", 2: "wed", 3: "thu", 4: "fri", 5: "sat", 6: "sun"}
+
+
+def _get_log_bucket(smps_logs: list[dict]) -> tuple[str, str]:
+    """smps_stats 로그의 최신 timestamp 기준 (weekday, bucket) 반환 (KST)"""
+    if not smps_logs:
+        kst_now = datetime.now(timezone.utc) + timedelta(hours=9)
+        minute_bucket = (kst_now.minute // 10) * 10
+        return WEEKDAY_MAP[kst_now.weekday()], f"{kst_now.hour:02d}:{minute_bucket:02d}"
+    try:
+        latest_ts = sorted([r["timestamp"] for r in smps_logs])[-1]
+        dt = datetime.fromisoformat(latest_ts.replace("Z", "+00:00"))
+        kst = dt + timedelta(hours=9)
+        minute_bucket = (kst.minute // 10) * 10
+        return WEEKDAY_MAP[kst.weekday()], f"{kst.hour:02d}:{minute_bucket:02d}"
+    except Exception:
+        kst_now = datetime.now(timezone.utc) + timedelta(hours=9)
+        minute_bucket = (kst_now.minute // 10) * 10
+        return WEEKDAY_MAP[kst_now.weekday()], f"{kst_now.hour:02d}:{minute_bucket:02d}"
+
+
+def _get_bucket_thresholds(profile: dict, weekday: str, bucket: str) -> str:
+    hosts = profile.get("hosts", {})
+    if not hosts:
+        return "임계치 프로파일 없음 — 상대적 패턴으로만 판단"
+
+    lines = [f"현재 시간대 ({weekday} {bucket} KST) 호스트별 임계치:"]
+    for host, weekdays in sorted(hosts.items()):
+        buckets = weekdays.get(weekday, {})
+        if bucket not in buckets:
+            continue
+        b = buckets[bucket]
+        rt = b.get("response_time", {})
+        bt = b.get("busy_threads", {})
+        af = b.get("auth_fail_rate", {})
+        lines.append(
+            f"- {host}: "
+            f"RT(평균={rt.get('baseline_avg')}ms, 모니터링={rt.get('monitor_threshold')}ms초과, 즉시조치={rt.get('critical_threshold')}ms초과) | "
+            f"BusyThreads(평균={bt.get('baseline_avg')}, 정상상한={bt.get('normal_max')}, 모니터링={bt.get('monitor_threshold')}초과, 즉시조치={bt.get('critical_threshold')}초과) | "
+            f"인증실패율(평균={af.get('baseline_avg')}%, 모니터링={af.get('monitor_threshold')}%초과, 즉시조치={af.get('critical_threshold')}%초과)"
+        )
+    return "\n".join(lines) if len(lines) > 1 else "임계치 프로파일 없음 — 상대적 패턴으로만 판단"
 
 
 def detect_anomaly(state: LogMonState) -> LogMonState:
-    """LLM 기반 이상 감지"""
-
+    """LLM 기반 이상 감지 (임계치 프로파일 참조)"""
     system_context = load_system_context()
+    profile = _load_threshold_profile()
+    weekday, bucket = _get_log_bucket(state.get('smps_stats_logs', []))
+    threshold_text = _get_bucket_thresholds(profile, weekday, bucket)
 
     prompt = f"""
 {system_context}
-
 ---
-
 당신은 SSO 서비스 운영 전문가입니다.
-위 시스템 명세를 참고하여 아래 3가지 로그 데이터를 분석하고 이상 징후를 감지하세요.
+위 시스템 명세와 아래 임계치 기준을 참고하여 로그 데이터를 분석하고 이상 징후를 감지하세요.
+
+## 임계치 기준 (LLM 생성, 기준 기간: {profile.get('baseline_period', '미설정')})
+{threshold_text}
 
 ## swg_lib 로그 (인증 로그)
 {json.dumps(state['swg_lib_logs'][:50], ensure_ascii=False, indent=2)}
@@ -37,20 +100,23 @@ def detect_anomaly(state: LogMonState) -> LogMonState:
 ## smps_stats 로그 (SiteMinder 성능 지표)
 {json.dumps(state['smps_stats_logs'][:50], ensure_ascii=False, indent=2)}
 
-## 분석 기준
-- swg_lib: 인증 실패(auth_result=-1) 급증, 특정 auth_reason 패턴
-- catalina: ERROR/WARN 레벨 로그, 예외 발생, sendOtpPwd/sendSmsByMqPut 오류
-- smps_stats: response_time 급증, exceeded_limit > 0, core_result = Y
+## 판단 기준
+- smps_stats: response_time, busy_threads 값을 위 임계치와 비교하여 정상/모니터링/즉시조치 판단
+- swg_lib: 인증 실패율을 위 임계치와 비교. auth_result=-1 급증, 특정 auth_reason 패턴 확인
+- catalina: ERROR/WARN 레벨, sendOtpPwd/sendSmsByMqPut 오류 확인
+- 모니터링/즉시조치 판단 시 임계치 초과 근거를 명시할 것
 
 ## 응답 형식 (JSON만 반환)
 {{
   "anomaly_detected": true/false,
+  "anomaly_level": "정상/모니터링/즉시조치",
   "anomaly_summary": "이상 감지 요약 (없으면 '이상 없음')",
+  "threshold_reference": "{weekday} {bucket} 버킷 임계치 기준 적용",
   "anomaly_details": [
     {{
       "log_type": "swg_lib/catalina/smps_stats",
       "host": "호스트명",
-      "description": "이상 내용",
+      "description": "이상 내용 (임계치 초과 수치 포함)",
       "severity": "HIGH/MEDIUM/LOW"
     }}
   ]
@@ -65,12 +131,13 @@ def detect_anomaly(state: LogMonState) -> LogMonState:
     )
 
     result = json.loads(response.choices[0].message.content)
-    print(f'  이상 감지: {result["anomaly_detected"]}')
+    print(f'  이상 감지: {result["anomaly_detected"]} ({result.get("anomaly_level", "")})')
     print(f'  요약: {result["anomaly_summary"]}')
 
     return {
         **state,
         'anomaly_detected': result.get('anomaly_detected', False),
+        'anomaly_level': result.get('anomaly_level', '정상'),
         'anomaly_summary': result.get('anomaly_summary', ''),
         'anomaly_details': result.get('anomaly_details', []),
     }
