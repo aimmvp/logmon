@@ -68,9 +68,9 @@ def _get_bucket_thresholds(profile: dict, weekday: str, bucket: str) -> str:
         af = b.get("auth_fail_rate", {})
         lines.append(
             f"- {host}: "
-            f"RT(평균={rt.get('baseline_avg')}ms, 모니터링={rt.get('monitor_threshold')}ms초과, 즉시조치={rt.get('critical_threshold')}ms초과) | "
-            f"BusyThreads(평균={bt.get('baseline_avg')}, 정상상한={bt.get('normal_max')}, 모니터링={bt.get('monitor_threshold')}초과, 즉시조치={bt.get('critical_threshold')}초과) | "
-            f"인증실패율(평균={af.get('baseline_avg')}%, 모니터링={af.get('monitor_threshold')}%초과, 즉시조치={af.get('critical_threshold')}%초과)"
+            f"RT(모니터링 판단기준={rt.get('monitor_threshold')}ms초과, 즉시조치 판단기준={rt.get('critical_threshold')}ms초과) | "
+            f"BusyThreads(모니터링 판단기준={bt.get('monitor_threshold')}초과, 즉시조치 판단기준={bt.get('critical_threshold')}초과) | "
+            f"인증실패율(모니터링 판단기준={af.get('monitor_threshold')}%초과, 즉시조치 판단기준={af.get('critical_threshold')}%초과)"
         )
     return "\n".join(lines) if len(lines) > 1 else "임계치 프로파일 없음 — 상대적 패턴으로만 판단"
 
@@ -100,11 +100,15 @@ def detect_anomaly(state: LogMonState) -> LogMonState:
 ## smps_stats 로그 (SiteMinder 성능 지표)
 {json.dumps(state['smps_stats_logs'][:50], ensure_ascii=False, indent=2)}
 
-## 판단 기준
-- smps_stats: response_time, busy_threads 값을 위 임계치와 비교하여 정상/모니터링/즉시조치 판단
-- swg_lib: 인증 실패율을 위 임계치와 비교. auth_result=-1 급증, 특정 auth_reason 패턴 확인
+## 판단 기준 (반드시 준수)
+- **정상**: 모든 지표가 모니터링 판단기준 이내
+- **모니터링**: 실제 측정값이 모니터링 판단기준을 **명확히 초과**한 경우만 해당. 근접하거나 초과 가능성만으로는 모니터링 판단 불가
+- **즉시조치**: 실제 측정값이 즉시조치 판단기준을 **명확히 초과**한 경우만 해당
+- 판단 시 반드시 "실제 측정값 XX > 판단기준 YY" 형태로 근거 명시
+- 측정값이 판단기준 미만이면 반드시 정상으로 판단
+- smps_stats: 각 호스트별 response_time, busy_threads 최신값과 판단기준 비교
+- swg_lib: 인증 실패율 실측값과 판단기준 비교. auth_result=-1 건수/비율 명시
 - catalina: ERROR/WARN 레벨, sendOtpPwd/sendSmsByMqPut 오류 확인
-- 모니터링/즉시조치 판단 시 임계치 초과 근거를 명시할 것
 
 ## 응답 형식 (JSON만 반환)
 {{
