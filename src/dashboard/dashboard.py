@@ -119,7 +119,7 @@ if menu == "📥 로그 수집":
 
     with col2:
         st.markdown('<div class="section-title">수집 실행</div>', unsafe_allow_html=True)
-        if st.button("▶ Gmail 수집 실행", use_container_width=True, type="primary"):
+        if st.button("▶ Gmail 수집 실행", width="stretch", type="primary"):
             with st.spinner("Gmail에서 로그 수집 중..."):
                 import sys, time as _time
                 env = os.environ.copy()
@@ -175,7 +175,7 @@ if menu == "📥 로그 수집":
         df_show = pd.concat(rows)[["id", "log_type", "log_date", "date"]].rename(
             columns={"log_type": "종류", "log_date": "로그 기준일자", "date": "수집일시"}
         )
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
+        st.dataframe(df_show, width="stretch", hide_index=True)
     else:
         st.info("수집된 메일이 없습니다.")
 
@@ -185,6 +185,31 @@ if menu == "📥 로그 수집":
 # ══════════════════════════════════════════════════════════════════════════════
 elif menu == "⚡ 임계치 확인":
     st.title("⚡ 임계치 확인")
+
+    # 상태 판단 함수
+    import json as _json3
+    _profile3 = {}
+    _tp3_path = ROOT / "data" / "threshold_profile.json"
+    if _tp3_path.exists():
+        with open(_tp3_path, encoding="utf-8") as _f3:
+            _profile3 = _json3.load(_f3)
+
+    def _auth_status(host, fail_rate, wd, bk):
+        try:
+            af = _profile3["hosts"][host][wd][bk]["auth_fail_rate"]
+            if fail_rate >= af["critical_threshold"]: return "🔴 즉시조치"
+            if fail_rate >= af["monitor_threshold"]: return "⚠️ 모니터링"
+            return "✅ 정상"
+        except: return "-"
+
+    def _otp_status(host, fail_rate, wd, bk):
+        try:
+            otp = _profile3["hosts"][host][wd][bk]["otp_success_rate"]
+            if otp.get("critical_threshold") and fail_rate >= otp["critical_threshold"]: return "🔴 즉시조치"
+            if otp.get("monitor_threshold") and fail_rate >= otp["monitor_threshold"]: return "⚠️ 모니터링"
+            return "✅ 정상"
+        except: return "-"
+
 
     st.markdown('---')
     df_latest_ts = query("SELECT MAX(timestamp) AS t FROM log_smps_stats")
@@ -298,7 +323,20 @@ elif menu == "⚡ 임계치 확인":
         ORDER BY success_rate ASC
     """)
     if not df_auth.empty:
-        df_auth_show = df_auth.rename(columns={
+        # 최신 로그 기준 요일/버킷
+        _wd_map2 = {0:"mon",1:"tue",2:"wed",3:"thu",4:"fri",5:"sat",6:"sun"}
+        if _auth_latest:
+            _al = pd.to_datetime(_auth_latest, format="ISO8601", utc=True) + KST_OFFSET
+            _auth_wd = _wd_map2[_al.weekday()]
+            _auth_bk = f"{_al.hour:02d}:{(_al.minute//10)*10:02d}"
+        else:
+            _auth_wd, _auth_bk = "mon", "00:00"
+
+        df_auth["fail_rate"] = 100.0 - df_auth["success_rate"]
+        df_auth["상태"] = df_auth.apply(
+            lambda r: _auth_status(r["host"], r["fail_rate"], _auth_wd, _auth_bk), axis=1
+        )
+        df_auth_show = df_auth[["상태","host","total","success","success_rate"]].rename(columns={
             "host": "호스트",
             "total": "총 시도",
             "success": "성공",
@@ -306,7 +344,7 @@ elif menu == "⚡ 임계치 확인":
         })
         for col in ["총 시도", "성공"]:
             df_auth_show[col] = df_auth_show[col].apply(lambda x: f"{int(x):,}")
-        st.dataframe(df_auth_show, use_container_width=True, hide_index=True)
+        st.dataframe(df_auth_show, width="stretch", hide_index=True)
     else:
         st.info("swg_lib 데이터가 없습니다.")
 
@@ -332,10 +370,24 @@ elif menu == "⚡ 임계치 확인":
         ORDER BY host
     """)
     if not df_cat.empty:
+        _wd_map3 = {0:"mon",1:"tue",2:"wed",3:"thu",4:"fri",5:"sat",6:"sun"}
+        if _cat_latest:
+            _cl = pd.to_datetime(_cat_latest, format="ISO8601", utc=True) + KST_OFFSET
+            _cat_wd = _wd_map3[_cl.weekday()]
+            _cat_bk = f"{_cl.hour:02d}:{(_cl.minute//10)*10:02d}"
+        else:
+            _cat_wd, _cat_bk = "mon", "00:00"
+
         df_cat["otp_success_rate"] = df_cat.apply(
             lambda r: round(100.0 * r["otp_success"] / r["otp_send_try"], 1) if r["otp_send_try"] > 0 else None, axis=1
         )
-        df_cat_show = df_cat[["host","otp_send_try","otp_success","otp_fail","otp_success_rate"]].rename(columns={
+        df_cat["otp_fail_rate"] = df_cat.apply(
+            lambda r: round(100.0 * r["otp_fail"] / r["otp_send_try"], 1) if r["otp_send_try"] > 0 else 0.0, axis=1
+        )
+        df_cat["상태"] = df_cat.apply(
+            lambda r: _otp_status(r["host"], r["otp_fail_rate"], _cat_wd, _cat_bk), axis=1
+        )
+        df_cat_show = df_cat[["상태","host","otp_send_try","otp_success","otp_fail","otp_success_rate"]].rename(columns={
             "host": "호스트",
             "otp_send_try": "OTP 발송 시도",
             "otp_success": "OTP 인증 성공",
@@ -344,7 +396,7 @@ elif menu == "⚡ 임계치 확인":
         })
         for col in ["OTP 발송 시도", "OTP 인증 성공", "OTP 인증 실패"]:
             df_cat_show[col] = df_cat_show[col].apply(lambda x: f"{int(x):,}")
-        st.dataframe(df_cat_show, use_container_width=True, hide_index=True)
+        st.dataframe(df_cat_show, width="stretch", hide_index=True)
     else:
         st.info("catalina 데이터가 없습니다.")
 
@@ -413,14 +465,14 @@ elif menu == "⚡ 임계치 확인":
 
             if rt_rows:
                 st.markdown("**⏱ 응답시간 (Response Time, ms)**")
-                st.dataframe(pd.DataFrame(rt_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rt_rows), width="stretch", hide_index=True)
                 st.markdown("**🔄 BusyThreads**")
-                st.dataframe(pd.DataFrame(bt_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(bt_rows), width="stretch", hide_index=True)
                 st.markdown("**🔐 1차 인증 실패율 (%)**")
-                st.dataframe(pd.DataFrame(af_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(af_rows), width="stretch", hide_index=True)
                 if otp_rows:
                     st.markdown("**📱 2차 인증 OTP 성공률 (%)**")
-                    st.dataframe(pd.DataFrame(otp_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(otp_rows), width="stretch", hide_index=True)
             else:
                 st.warning(f"{sel_weekday} {sel_bucket} 버킷 데이터 없음")
 
@@ -499,7 +551,7 @@ elif menu == "📊 로그 조회":
             st.line_chart(df_bt_pivot)
 
             st.markdown('<div class="section-title">원본 데이터</div>', unsafe_allow_html=True)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
     elif do_query and log_type == "swg_lib":
         df = query(f"""
@@ -521,7 +573,7 @@ elif menu == "📊 로그 조회":
             st.bar_chart(df_grouped)
 
             st.markdown('<div class="section-title">원본 데이터</div>', unsafe_allow_html=True)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
     elif do_query and log_type == "catalina":
         df = query(f"""
@@ -539,7 +591,7 @@ elif menu == "📊 로그 조회":
             if selected_level != "전체":
                 df = df[df["log_level"] == selected_level]
 
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
     elif do_query:
         st.info("조회된 데이터가 없습니다.")

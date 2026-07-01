@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from openai import AzureOpenAI
 from src.schemas.state import LogMonState
 from src.tools.rag_search_tool import rag_search_tool, format_rag_results
+from src.tools.web_search_tool import web_search_tool, format_web_results
 from src.utils.prompt_loader import load_system_context
 
 load_dotenv()
@@ -43,6 +44,18 @@ def generate_guide(state: LogMonState) -> LogMonState:
 
     print(f"  [SC-002] incident_id: {incident_id} | 차수: {iteration_count}")
     print(f"  RAG 검색 완료: {len(rag_output['results'])}개 문서")
+
+    # ── 웹 검색 (RAG 결과 부족 시 보완) ──────────────────────────────────────
+    web_context = ""
+    avg_score = sum(r["score"] for r in rag_output["results"]) / len(rag_output["results"]) if rag_output["results"] else 0
+    if avg_score < 0.45:  # RAG 유사도 평균 0.45 미만이면 웹 검색 보완
+        en_query = rag_output.get("translated_query", "")
+        web_output = web_search_tool(query=rag_query, max_results=3, en_query=en_query)
+        web_context = format_web_results(web_output)
+        if web_output["results"]:
+            print(f"  웹 검색 보완: {len(web_output['results'])}건 (RAG 평균 유사도 {avg_score:.3f})")
+    else:
+        print(f"  웹 검색 스킵 (RAG 평균 유사도 {avg_score:.3f} ≥ 0.45)")
 
     # ── 이전 조치 이력 텍스트 변환 ─────────────────────────────────────────────
     history_text = ""
@@ -81,6 +94,7 @@ def generate_guide(state: LogMonState) -> LogMonState:
 {history_text}
 
 {rag_context}
+{web_context}
 
 ## 가이드 작성 규칙
 1. 판단 근거: 어떤 로그의 어떤 패턴인지 명시 (파일명/항목명 포함)

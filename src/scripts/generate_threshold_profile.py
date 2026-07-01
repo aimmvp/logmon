@@ -53,8 +53,8 @@ def _calc_thresholds(series: pd.Series) -> dict:
     return {
         "baseline_avg": p50,
         "normal_max": p95,
-        "monitor_threshold": round(p95 * 1.5, 3),
-        "critical_threshold": round(p95 * 2.0, 3),
+        "monitor_threshold": round(p95 * 2.0, 3),
+        "critical_threshold": round(p95 * 2.5, 3),
     }
 
 
@@ -115,8 +115,8 @@ def build_profile(smps_df: pd.DataFrame, auth_df: pd.DataFrame, otp_df: pd.DataF
                     af_thresholds = {
                         "baseline_avg": fail_rate,
                         "normal_max": round(fail_rate * 1.0, 3),
-                        "monitor_threshold": round(fail_rate * 1.5, 3),
-                        "critical_threshold": round(fail_rate * 2.0, 3),
+                        "monitor_threshold": round(fail_rate * 2.0, 3),
+                        "critical_threshold": round(fail_rate * 2.5, 3),
                     }
                 else:
                     af_thresholds = {"baseline_avg": 0, "normal_max": 0,
