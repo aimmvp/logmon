@@ -30,7 +30,10 @@ def get_gmail_service():
         else:
             from google_auth_oauthlib.flow import InstalledAppFlow
             flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
+            # creds = flow.run_local_server(port=0)
+            # collect_batch.py 33번 줄 수정
+            # creds = flow.run_console()
+            creds = flow.run_local_server(port=8080, open_browser=True)
         with open(token_path, 'w') as f:
             f.write(creds.to_json())
 
@@ -174,8 +177,19 @@ def save_to_sqlite(emails: list[dict]) -> tuple[int, int]:
 
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--once', action='store_true')
+    args = parser.parse_args()
+
     print('📧 Datadog 로그 메일 수집 시작...')
-    emails = fetch_log_emails(max_results=500)
+    db_path = os.getenv('SQLITE_DB_PATH')
+    since = get_last_collected_date(db_path)
+    if since:
+        from datetime import timedelta
+        since = since + timedelta(days=1)
+        print(f'  마지막 수집: {since.strftime("%Y-%m-%d")} 이후 메일만 조회')
+    emails = fetch_log_emails(max_results=500, since=since)
     print(f'  수집된 메일: {len(emails)}건')
     for e in emails:
         print(f'  - {e["subject"]} ({len(e["attachments"])}개 첨부)')

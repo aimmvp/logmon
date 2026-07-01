@@ -100,36 +100,53 @@ if menu == "📥 로그 수집":
     col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown('<div class="section-title">현재 적재 현황</div>', unsafe_allow_html=True)
-        counts = {
-            "swg_lib": query("SELECT COUNT(*) AS n FROM log_swg_lib").iloc[0]["n"] if not query("SELECT COUNT(*) AS n FROM log_swg_lib").empty else 0,
-            "catalina": query("SELECT COUNT(*) AS n FROM log_catalina").iloc[0]["n"] if not query("SELECT COUNT(*) AS n FROM log_catalina").empty else 0,
-            "smps_stats": query("SELECT COUNT(*) AS n FROM log_smps_stats").iloc[0]["n"] if not query("SELECT COUNT(*) AS n FROM log_smps_stats").empty else 0,
-        }
-        c1, c2, c3 = st.columns(3)
-        c1.metric("swg_lib", f"{counts['swg_lib']:,}건")
-        c2.metric("catalina", f"{counts['catalina']:,}건")
-        c3.metric("smps_stats", f"{counts['smps_stats']:,}건")
+        def get_range(table):
+            df = query(f"SELECT MIN(timestamp) AS s, MAX(timestamp) AS e, COUNT(*) AS n FROM {table}")
+            if df.empty: return "-", "-", 0
+            return df.iloc[0]["s"], df.iloc[0]["e"], int(df.iloc[0]["n"])
+
+        for tbl, label in [("log_swg_lib","swg_lib"),("log_catalina","catalina"),("log_smps_stats","smps_stats")]:
+            s, e, n = get_range(tbl)
+            s_kst = (pd.to_datetime(s, format="ISO8601", utc=True) + KST_OFFSET).strftime("%Y-%m-%d %H:%M") if s != "-" else "-"
+            e_kst = (pd.to_datetime(e, format="ISO8601", utc=True) + KST_OFFSET).strftime("%Y-%m-%d %H:%M") if e != "-" else "-"
+            st.markdown(f"""
+            <div class="metric-card ok">
+                <b>{label}</b> &nbsp;|&nbsp; {n:,}건<br>
+                <small>시작: {s_kst} &nbsp;|&nbsp; 종료: {e_kst} (KST)</small>
+            </div>
+            """, unsafe_allow_html=True)
 
     with col2:
         st.markdown('<div class="section-title">수집 실행</div>', unsafe_allow_html=True)
         if st.button("▶ Gmail 수집 실행", use_container_width=True, type="primary"):
             with st.spinner("Gmail에서 로그 수집 중..."):
-                result = subprocess.run(
-                    ["python", "-m", "src.batch.collect_batch", "--once"],
-                    capture_output=True, text=True, cwd=str(ROOT)
+                import sys
+                env = os.environ.copy()
+                env["PYTHONPATH"] = str(ROOT)
+
+                # 1. 메일 수집
+                r1 = subprocess.run(
+                    [sys.executable, "-m", "src.batch.collect_batch"],
+                    capture_output=True, text=True, cwd=str(ROOT), env=env
                 )
-                if result.returncode == 0:
-                    st.success("수집 완료")
-                    st.code(result.stdout)
+                # 2. 로그 파싱
+                r2 = subprocess.run(
+                    [sys.executable, "-m", "src.tools.log_parser"],
+                    capture_output=True, text=True, cwd=str(ROOT), env=env
+                )
+
+                if r1.returncode == 0 and r2.returncode == 0:
+                    st.success("수집 및 파싱 완료")
+                    st.code(r1.stdout + r2.stdout)
                     get_conn.clear()
                     st.rerun()
                 else:
-                    st.error("수집 실패")
-                    st.code(result.stderr)
+                    st.error("수집/파싱 실패")
+                    st.code(r1.stderr + r2.stderr)
 
     # 최근 수집 메일 목록
     st.markdown('<div class="section-title">최근 수집 메일</div>', unsafe_allow_html=True)
-    df_mail = query("SELECT id, subject, date FROM log_emails ORDER BY date DESC LIMIT 20")
+    df_mail = query("SELECT id, subject, date FROM log_emails ORDER BY id DESC LIMIT 20")
     if not df_mail.empty:
         st.dataframe(df_mail, use_container_width=True, hide_index=True)
     else:
@@ -236,7 +253,9 @@ elif menu == "📊 로그 조회":
     host_filter = "" if selected_host == "전체" else f"AND host = '{selected_host}'"
     sample_filter = "AND email_id IN (9001, 9002, 9999)" if sample_only else ""
 
-    if log_type == "smps_stats":
+    do_query = st.button("🔍 조회", type="primary")
+
+    if do_query and log_type == "smps_stats":
         df = query(f"""
             SELECT timestamp, host, response_time, busy_threads,
                    throughput, exceeded_limit, core_result, current_connections
@@ -271,7 +290,7 @@ elif menu == "📊 로그 조회":
             st.markdown('<div class="section-title">원본 데이터</div>', unsafe_allow_html=True)
             st.dataframe(df, use_container_width=True, hide_index=True)
 
-    elif log_type == "swg_lib":
+    elif do_query and log_type == "swg_lib":
         df = query(f"""
             SELECT timestamp, host, auth_type, auth_result, auth_reason,
                    user_id, co_cl_cd
@@ -293,7 +312,7 @@ elif menu == "📊 로그 조회":
             st.markdown('<div class="section-title">원본 데이터</div>', unsafe_allow_html=True)
             st.dataframe(df, use_container_width=True, hide_index=True)
 
-    elif log_type == "catalina":
+    elif do_query and log_type == "catalina":
         df = query(f"""
             SELECT timestamp, host, log_level, logger, log_message
             FROM log_catalina
@@ -311,7 +330,7 @@ elif menu == "📊 로그 조회":
 
             st.dataframe(df, use_container_width=True, hide_index=True)
 
-    if df.empty:
+    elif do_query:
         st.info("조회된 데이터가 없습니다.")
 
 
