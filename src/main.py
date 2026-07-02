@@ -122,6 +122,7 @@ def _default_state() -> dict:
         'rag_results': [],
         'guide_message': '',
         'normalized_at': '',
+        'target_time': None,
     }
 
 

@@ -10,6 +10,7 @@ class LogMonState(TypedDict):
     report_requested: Optional[bool]   # True = 보고서 생성 요청 (SC-003)
 
     # ── load_logs ─────────────────────────────────────────────────────────────
+    target_time: Optional[str]         # UTC ISO8601, 지정 시 해당 시점 ±10분 조회 (시뮬레이터용)
     swg_lib_logs: list[dict]
     catalina_logs: list[dict]
     smps_stats_logs: list[dict]
